@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cal-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cal-test
+  template:
+    metadata:
+      labels:
+        app: cal-test
+    spec:
+      containers:
+      - name: cal-test
+        image: <group>/cal_test:<tag>
+        imagePullPolicy: Always
+        args:
+        - /bin/sh
+        - -c
+        - sleep infinity

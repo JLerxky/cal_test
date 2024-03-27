@@ -1,4 +1,4 @@
-url = "http://127.0.0.1/auto_api/api/cita-cloud-test/send_tx"
+url = "http://124.71.204.213/auto_api/api/cita-cloud-test/send_tx"
 
 [headers]
 user_code = "test-user-1"
@@ -8,7 +8,3 @@ version = "task"
 [body]
 to = "0x164f225d70805e94f5179eb1a523c5796e68893b"
 data = "0x1e2fc4f7"
-
-[params.request_key]
-init_seq_num = 222000
-step = 1

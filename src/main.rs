@@ -11,6 +11,7 @@ use common_x::{configure, log};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
 use request::Request;
+use reqwest::Client;
 use serde_json::Value;
 
 use crate::request::Job;
@@ -46,6 +47,8 @@ struct RunOpts {
     total: u64,
     #[clap(short = 'g', default_value = "50")]
     granularity: u64,
+    #[clap(short = 'i', default_value = "0")]
+    init_seq_num: u64,
     #[clap(short = 'j', default_value = "job.toml")]
     job: String,
     #[clap(short = 'd', default_value = "false")]
@@ -105,7 +108,8 @@ async fn run(opts: RunOpts) -> Result<()> {
 
     let (tx, rv) = flume::bounded(total as usize);
 
-    let job: Job = configure::file_config(&opts.job).unwrap();
+    let mut job: Job = configure::file_config(&opts.job).unwrap();
+    job.init_seq_num = opts.init_seq_num;
     for i in 0..opts.total {
         let request = job.get(i);
         tx.send(request).ok();
@@ -113,16 +117,24 @@ async fn run(opts: RunOpts) -> Result<()> {
 
     let mut workers = vec![];
 
+    let http_client = reqwest::Client::builder()
+        .pool_max_idle_per_host(opts.concurrency as usize)
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?;
+
     let begin_time = std::time::SystemTime::now();
 
     for _ in 0..opts.concurrency {
         let record = record.clone();
         let rv = rv.clone();
         let pb = pb.clone();
+        let http_client = http_client.clone();
         let granularity = opts.granularity;
         let worker = tokio::spawn(async move {
             while let Ok(key) = rv.try_recv() {
-                if let Err(e) = subtask(key, record.clone(), granularity).await {
+                if let Err(e) = subtask(key, record.clone(), http_client.clone(), granularity).await
+                {
                     warn!("task err: {:?}", e);
                 }
                 pb.inc(1);
@@ -196,12 +208,12 @@ pub struct TaskResult {
 }
 
 #[inline]
-async fn subtask(request: Request, record: Arc<RwLock<Record>>, granularity: u64) -> Result<()> {
-    let http_client = reqwest::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .timeout(std::time::Duration::from_secs(10))
-        .build()?;
-
+async fn subtask(
+    request: Request,
+    record: Arc<RwLock<Record>>,
+    http_client: Client,
+    granularity: u64,
+) -> Result<()> {
     let begin_time = std::time::SystemTime::now();
     let mut req_builder = http_client.post(&request.url).json(&request.body);
 
