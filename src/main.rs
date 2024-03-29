@@ -43,8 +43,10 @@ struct RunOpts {
     worker: usize,
     #[clap(short = 'c', default_value = "1")]
     concurrency: u64,
-    #[clap(short = 't', default_value = "0")]
-    total: u64,
+    #[clap(short = 'n', default_value = "0")]
+    total_num: u64,
+    #[clap(short = 't', default_value = "10000")]
+    timeout: u64,
     #[clap(short = 'g', default_value = "50")]
     granularity: u64,
     #[clap(short = 'i', default_value = "0")]
@@ -98,7 +100,7 @@ fn categorize(elapsed_vec: &mut Vec<usize>, granularity: u64, elapsed: f64) {
 }
 
 async fn run(opts: RunOpts) -> Result<()> {
-    let total = opts.total;
+    let total = opts.total_num;
     let pb = ProgressBar::new(total);
     let record = Arc::new(RwLock::new(Record {
         success: 0,
@@ -110,7 +112,7 @@ async fn run(opts: RunOpts) -> Result<()> {
 
     let mut job: Job = configure::file_config(&opts.job).unwrap();
     job.init_seq_num = opts.init_seq_num;
-    for i in 0..opts.total {
+    for i in 0..opts.total_num {
         let request = job.get(i);
         tx.send(request).ok();
     }
@@ -119,8 +121,8 @@ async fn run(opts: RunOpts) -> Result<()> {
 
     let http_client = reqwest::Client::builder()
         .pool_max_idle_per_host(opts.concurrency as usize)
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .timeout(std::time::Duration::from_secs(10))
+        .connect_timeout(std::time::Duration::from_millis(opts.timeout))
+        .timeout(std::time::Duration::from_millis(opts.timeout))
         .build()?;
 
     let begin_time = std::time::SystemTime::now();
