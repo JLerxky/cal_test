@@ -11,8 +11,8 @@ use common_x::{configure, log};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
 use request::Request;
-use reqwest::Client;
 use serde_json::Value;
+use tokio::select;
 
 use crate::request::Job;
 
@@ -112,18 +112,17 @@ async fn run(opts: RunOpts) -> Result<()> {
 
     let mut job: Job = configure::file_config(&opts.job).unwrap();
     job.init_seq_num = opts.init_seq_num;
-    for i in 0..opts.total_num {
-        let request = job.get(i);
-        tx.send(request).ok();
-    }
+
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(1));
+        for i in 0..opts.total_num {
+            interval.tick().await;
+            let request = job.get(i);
+            tx.send(request).ok();
+        }
+    });
 
     let mut workers = vec![];
-
-    let http_client = reqwest::Client::builder()
-        .pool_max_idle_per_host(opts.concurrency as usize)
-        .connect_timeout(std::time::Duration::from_millis(opts.timeout))
-        .timeout(std::time::Duration::from_millis(opts.timeout))
-        .build()?;
 
     let begin_time = std::time::SystemTime::now();
 
@@ -131,15 +130,24 @@ async fn run(opts: RunOpts) -> Result<()> {
         let record = record.clone();
         let rv = rv.clone();
         let pb = pb.clone();
-        let http_client = http_client.clone();
         let granularity = opts.granularity;
         let worker = tokio::spawn(async move {
-            while let Ok(key) = rv.try_recv() {
-                if let Err(e) = subtask(key, record.clone(), http_client.clone(), granularity).await
-                {
-                    warn!("task err: {:?}", e);
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+            loop {
+                select! {
+                    Ok(key) = rv.recv_async() => {
+                        if let Err(e) = subtask(key, opts.timeout, record.clone(), granularity).await {
+                            warn!("task err: {:?}", e);
+                        }
+                        pb.inc(1);
+                    }
+                    _ = interval.tick() => {
+                        pb.tick();
+                    }
                 }
-                pb.inc(1);
+                if pb.position() >= total {
+                    break;
+                }
             }
         });
         workers.push(worker);
@@ -212,11 +220,16 @@ pub struct TaskResult {
 #[inline]
 async fn subtask(
     request: Request,
+    timeout: u64,
     record: Arc<RwLock<Record>>,
-    http_client: Client,
     granularity: u64,
 ) -> Result<()> {
-    let begin_time = std::time::SystemTime::now();
+    let http_client = reqwest::Client::builder()
+        .pool_max_idle_per_host(1)
+        .connect_timeout(std::time::Duration::from_millis(timeout))
+        .timeout(std::time::Duration::from_millis(timeout))
+        .build()?;
+
     let mut req_builder = http_client.post(&request.url).json(&request.body);
 
     if let Some(headers) = request.headers.as_object().cloned() {
@@ -225,12 +238,13 @@ async fn subtask(
         }
     }
 
+    let begin_time = std::time::SystemTime::now();
     let rsp = req_builder
         .send()
         .await
         .map_err(|e| eyre!("send {request:?} err: {e}"))?;
-
     let elapsed = begin_time.elapsed().unwrap().as_secs_f64();
+
     let status_code = rsp.status().as_u16();
     let json = rsp
         .json::<Value>()
