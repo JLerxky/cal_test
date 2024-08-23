@@ -8,6 +8,7 @@ pub struct Job {
     pub url: String,
     pub headers: Value,
     pub body: Value,
+    pub method: Method,
     pub params: Value,
     pub init_seq_num: u64,
 }
@@ -18,6 +19,16 @@ pub struct Request {
     pub url: String,
     pub headers: Value,
     pub body: Value,
+    pub method: Method,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub enum Method {
+    #[default]
+    Post,
+    Get,
+    Put,
+    Delete,
 }
 
 impl Job {
@@ -27,6 +38,7 @@ impl Job {
             url: self.url.clone(),
             headers: self.headers.clone(),
             body: self.body.clone(),
+            method: self.method,
         };
 
         let request_json = serde_json::to_string(&request).unwrap();

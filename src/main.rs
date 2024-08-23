@@ -10,7 +10,7 @@ use color_eyre::{eyre::eyre, Result};
 use common_x::{configure, log};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
-use request::Request;
+use request::{Method, Request};
 use serde_json::Value;
 use tokio::select;
 
@@ -230,7 +230,12 @@ async fn subtask(
         .timeout(std::time::Duration::from_millis(timeout))
         .build()?;
 
-    let mut req_builder = http_client.post(&request.url).json(&request.body);
+    let mut req_builder = match request.method {
+        Method::Get => http_client.get(&request.url).json(&request.body),
+        Method::Post => http_client.post(&request.url).json(&request.body),
+        Method::Put => http_client.put(&request.url).json(&request.body),
+        Method::Delete => http_client.delete(&request.url).json(&request.body),
+    };
 
     if let Some(headers) = request.headers.as_object().cloned() {
         for header in headers {
@@ -246,10 +251,12 @@ async fn subtask(
     let elapsed = begin_time.elapsed().unwrap().as_secs_f64();
 
     let status_code = rsp.status().as_u16();
-    let json = rsp
-        .json::<Value>()
+    let text = rsp
+        .text()
         .await
-        .map_err(|e| eyre!("decode json err {request:?}: {e}"))?;
+        .map_err(|e| eyre!("decode text err {request:?}: {e} "))?;
+    let json: Value = serde_json::from_str(&text)
+        .map_err(|e| eyre!("decode json err {request:?}: {e} \n{text}"))?;
     recording(
         TaskResult {
             req: request,
